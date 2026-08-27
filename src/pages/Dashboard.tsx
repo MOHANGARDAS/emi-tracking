@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { db, refreshOverdueStatus, isToday, isThisMonth } from '@/db';
 import { Loan, EMIEntry, Income, Expense } from '@/types';
-import { formatCurrency, formatDate, daysUntil, isSameMonth } from '@/utils/helpers';
+import { formatCurrency, formatDate, formatDateShort, daysUntil, getDaysLabel, isSameMonth } from '@/utils/helpers';
 import { StatCard, Card } from '@/components/ui/Card';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -13,6 +13,47 @@ function isNextMonth(dateStr: string): boolean {
   const now = new Date();
   const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
   return d.getMonth() === next.getMonth() && d.getFullYear() === next.getFullYear();
+}
+
+interface UpcomingItem {
+  key: string;
+  kind: 'emi' | 'onetime';
+  loanId: number;
+  lender: string;
+  label: string;
+  dueDate: string;
+  amount: number;
+}
+
+function groupByMonth(items: UpcomingItem[]): { label: string; items: UpcomingItem[] }[] {
+  const groups: { label: string; items: UpcomingItem[] }[] = [];
+  for (const item of items) {
+    const label = new Date(item.dueDate).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.items.push(item);
+    else groups.push({ label, items: [item] });
+  }
+  return groups;
+}
+
+function UpcomingRow({ item }: { item: UpcomingItem }) {
+  const due = new Date(item.dueDate);
+  const days = daysUntil(item.dueDate);
+  return (
+    <Link to={`/loans/${item.loanId}`} className="flex items-center gap-3 p-3 rounded-xl bg-[#0f172a] border border-[#334155]/50 hover:border-[#475569] transition-colors">
+      <div className={`w-11 shrink-0 text-center rounded-lg border py-1.5 ${days <= 3 ? 'bg-[#f59e0b]/10 border-[#f59e0b]/20' : 'bg-[#3b82f6]/10 border-[#3b82f6]/20'}`}>
+        <p className="text-[15px] font-bold leading-none">{due.getDate()}</p>
+        <p className="text-[9px] text-slate-400 uppercase mt-0.5 tracking-wide">{due.toLocaleDateString('en-IN',{month:'short'})}</p>
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-[13px] font-medium truncate">{item.kind==='onetime' ? '👤' : '💳'} {item.lender} • {item.label}</p>
+        <p className={`text-[11px] mt-0.5 ${days < 0 ? 'text-[#ef4444]' : days <= 3 ? 'text-[#f59e0b]' : 'text-slate-500'}`}>
+          {formatDateShort(item.dueDate)} • {getDaysLabel(days)}
+        </p>
+      </div>
+      <p className="text-[13px] font-bold shrink-0">{formatCurrency(item.amount)}</p>
+    </Link>
+  );
 }
 
 export default function Dashboard(){
@@ -32,9 +73,9 @@ export default function Dashboard(){
     totalExpense: 0,
     netSavings: 0
   });
-  const [upcomingEMIs, setUpcomingEMIs] = useState<(EMIEntry & { lender?: string })[]>([]);
+  const [upcomingAll, setUpcomingAll] = useState<UpcomingItem[]>([]);
+  const [showFullUpcoming, setShowFullUpcoming] = useState(false);
   const [overdueEMIs, setOverdueEMIs] = useState<(EMIEntry & { lender?: string })[]>([]);
-  const [oneTimeUpcoming, setOneTimeUpcoming] = useState<Loan[]>([]);
   const [monthlyChart, setMonthlyChart] = useState<any[]>([]);
   const [incomeExpenseChart, setIncomeExpenseChart] = useState<any[]>([]);
   const [recentTx, setRecentTx] = useState<(EMIEntry & { lender?: string })[]>([]);
@@ -89,10 +130,16 @@ export default function Dashboard(){
     const totalIncome = incomes.reduce((s,i)=>s+i.amount,0);
     const totalExpense = expenses.reduce((s,e)=>s+e.amount,0);
 
-    const next30 = new Date(); next30.setDate(today.getDate()+30);
-    const upcomingList = emiEntries.filter(e=>{ const d = new Date(e.dueDate); return d>=today && d<=next30 && e.status==='pending'; }).sort((a,b)=> new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()).slice(0,5).map(e=>({...e, lender: emiMap.get(e.loanId)}));
+    const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+    // All upcoming: every pending EMI from today onwards + active one-time dues — date-wise sorted, no day limit
+    const emiUpcoming: UpcomingItem[] = emiEntries
+      .filter(e => e.status==='pending' && new Date(e.dueDate) >= todayStart)
+      .map(e => ({ key:`emi-${e.id}`, kind:'emi' as const, loanId:e.loanId, lender: emiMap.get(e.loanId) || 'Loan', label:`EMI #${e.monthNumber}`, dueDate:e.dueDate, amount:e.amount }));
+    const oneTimeUp: UpcomingItem[] = loans
+      .filter(l => l.type==='onetime' && (l.status==='active'||l.status==='overdue') && l.dueDate && new Date(l.dueDate) >= todayStart)
+      .map(l => ({ key:`ot-${l.id}`, kind:'onetime' as const, loanId:l.id!, lender:l.lenderName, label:'One-time', dueDate:l.dueDate!, amount:l.totalAmount }));
+    const upcomingList = [...emiUpcoming, ...oneTimeUp].sort((a,b)=> new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
     const overdueList = overdueEMI.sort((a,b)=> new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()).slice(0,5).map(e=>({...e, lender: emiMap.get(e.loanId)}));
-    const oneTimeList = loans.filter(l=>l.type==='onetime' && (l.status==='active'||l.status==='overdue')).filter(l=>{ if(!l.dueDate) return false; const d = new Date(l.dueDate); return d >= today && d <= next30 || l.status==='overdue'; }).sort((a,b)=> new Date((a.dueDate||'')).getTime() - new Date((b.dueDate||'')).getTime()).slice(0,3);
 
     const chartData: any[] = [];
     const incExpChart: any[] = [];
@@ -140,9 +187,8 @@ export default function Dashboard(){
       totalExpense,
       netSavings: totalIncome - totalExpense
     });
-    setUpcomingEMIs(upcomingList);
+    setUpcomingAll(upcomingList);
     setOverdueEMIs(overdueList);
-    setOneTimeUpcoming(oneTimeList);
     setMonthlyChart(chartData);
     setIncomeExpenseChart(incExpChart);
     setRecentTx(recent);
@@ -152,6 +198,8 @@ export default function Dashboard(){
   }
 
   const nextMonthName = new Date(new Date().getFullYear(), new Date().getMonth()+1, 1).toLocaleDateString('en-IN',{month:'long'});
+  const upcomingGroups = groupByMonth(upcomingAll);
+  const upcomingTotal = upcomingAll.reduce((s,i)=>s+i.amount,0);
 
   return (
     <div className="space-y-6">
@@ -338,36 +386,20 @@ export default function Dashboard(){
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         <Card className="p-4 md:p-5">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-[15px]">Upcoming (30 days)</h3>
-            <span className="text-[11px] bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20 px-2 py-1 rounded-full font-medium">{upcomingEMIs.length + oneTimeUpcoming.length}</span>
+            <h3 className="font-semibold text-[15px]">Upcoming Dues</h3>
+            <span className="text-[11px] bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20 px-2 py-1 rounded-full font-medium">{upcomingAll.length}</span>
           </div>
           <div className="space-y-2.5">
-            {upcomingEMIs.map(e=>(
-              <Link key={e.id} to={`/loans/${e.loanId}`} className="flex items-center justify-between p-3 rounded-xl bg-[#0f172a] border border-[#334155]/50">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-[#3b82f6]/10 border border-[#3b82f6]/20 flex items-center justify-center"><span className="text-[16px]">💳</span></div>
-                  <div>
-                    <p className="text-[13px] font-medium">{e.lender} • #{e.monthNumber}</p>
-                    <p className="text-[11px] text-slate-500">{formatDate(e.dueDate)} • {daysUntil(e.dueDate)} days left</p>
-                  </div>
-                </div>
-                <p className="text-[13px] font-bold">{formatCurrency(e.amount)}</p>
-              </Link>
+            {upcomingAll.slice(0,5).map(item=>(
+              <UpcomingRow key={item.key} item={item} />
             ))}
-            {oneTimeUpcoming.map(l=>(
-              <Link key={l.id} to={`/loans/${l.id}`} className="flex items-center justify-between p-3 rounded-xl bg-[#0f172a] border border-[#334155]/50">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-[#f59e0b]/10 border border-[#f59e0b]/20 flex items-center justify-center">👤</div>
-                  <div>
-                    <p className="text-[13px] font-medium">{l.lenderName}</p>
-                    <p className="text-[11px] text-slate-500">{l.dueDate ? formatDate(l.dueDate) : ''}</p>
-                  </div>
-                </div>
-                <p className="text-[13px] font-bold">{formatCurrency(l.totalAmount)}</p>
-              </Link>
-            ))}
-            {upcomingEMIs.length===0 && oneTimeUpcoming.length===0 && <p className="text-[13px] text-slate-500 text-center py-8">No upcoming dues</p>}
+            {upcomingAll.length===0 && <p className="text-[13px] text-slate-500 text-center py-8">No upcoming dues</p>}
           </div>
+          {upcomingAll.length>5 && (
+            <button onClick={()=>setShowFullUpcoming(true)} className="mt-3 w-full text-center text-[12px] font-medium text-[#22c55e] bg-[#22c55e]/5 hover:bg-[#22c55e]/10 border border-[#22c55e]/20 rounded-xl py-2.5 transition-colors">
+              View Full — all {upcomingAll.length} dues
+            </button>
+          )}
         </Card>
 
         <Card className="p-4 md:p-5">
@@ -392,6 +424,36 @@ export default function Dashboard(){
           </div>
         </Card>
       </div>
+
+      {/* Full upcoming list modal — all dues, date-wise, no limit */}
+      {showFullUpcoming && (
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center sm:p-6" onClick={()=>setShowFullUpcoming(false)}>
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div className="relative w-full sm:max-w-lg max-h-[85vh] bg-[#1e293b] border border-[#334155] rounded-t-[20px] sm:rounded-[20px] flex flex-col overflow-hidden shadow-2xl" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-[#334155]/60">
+              <div>
+                <h3 className="font-semibold text-[15px]">All Upcoming Dues</h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">{upcomingAll.length} payments • {formatCurrency(upcomingTotal)} total • date-wise</p>
+              </div>
+              <button onClick={()=>setShowFullUpcoming(false)} className="w-8 h-8 rounded-full bg-[#0f172a] border border-[#334155] text-slate-400 hover:text-slate-200 hover:border-[#475569] transition-colors flex items-center justify-center shrink-0">✕</button>
+            </div>
+            <div className="overflow-y-auto p-4 space-y-5">
+              {upcomingGroups.map(g=>(
+                <div key={g.label}>
+                  <div className="sticky top-0 bg-[#1e293b] flex items-center justify-between py-1.5 z-10">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#f59e0b]">{g.label}</p>
+                    <span className="text-[10px] text-slate-500">{g.items.length} • {formatCurrency(g.items.reduce((s,i)=>s+i.amount,0))}</span>
+                  </div>
+                  <div className="space-y-2 mt-1">
+                    {g.items.map(item=> <UpcomingRow key={item.key} item={item} />)}
+                  </div>
+                </div>
+              ))}
+              {upcomingAll.length===0 && <p className="text-[13px] text-slate-500 text-center py-8">No upcoming dues</p>}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
