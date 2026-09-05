@@ -154,17 +154,21 @@ export async function exportJSON() {
   const blob = await generateJSONBlob();
   saveAs(blob, `EMI_Tracker_Latest.json`);
   const backup = await getFullBackup();
+  // Store a local backup timestamp for the user's reference
+  localStorage.setItem('emi_localBackupAt', new Date().toISOString());
   return backup;
 }
 
 export async function exportCSV() {
   const blob = await generateCSVBlob();
   saveAs(blob, `EMI_Tracker_Latest.csv`);
+  localStorage.setItem('emi_localBackupAt', new Date().toISOString());
 }
 
 export async function exportExcel() {
   const blob = await generateExcelBlob();
   saveAs(blob, `EMI_Tracker_Latest.xlsx`);
+  localStorage.setItem('emi_localBackupAt', new Date().toISOString());
 }
 
 export async function restoreFromBackup(data: any) {

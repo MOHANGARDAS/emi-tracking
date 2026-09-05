@@ -1,6 +1,32 @@
-// Original Google Drive integration - Client ID hardcoded as per spec
-// Steps: Cloud Console project -> Drive API enable -> OAuth Client ID generate -> hardcoded
-export const GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
+// Google Drive backup configuration
+// 1. Create a Cloud Console project, enable Drive API, create OAuth 2.0 Client ID (Web application)
+// 2. Replace the placeholder below with your Client ID, or let the user set it via Settings → Google Drive Backup
+// 3. The first time a user connects, they'll go through the Google consent screen.
+// 4. Token is stored in localStorage and persists across browser restores (but not phone factory reset).
+//
+// To get a Client ID:
+//   - Go to https://console.cloud.google.com/
+//   - Create a new project (or select existing)
+//   - Enable "Google Drive API"
+//   - Go to "APIs & Services → Credentials"
+//   - Create "Web application" OAuth client ID
+//   - Set authorized redirect URIs (e.g. https://localhost)
+//   - Copy the Client ID here or let users set it in the app Settings
+export const GOOGLE_CLIENT_ID = '';
+
+/**
+ * Falls back to a meta tag <meta name="google-client-id" content="YOUR_ID"> if localStorage is empty.
+ * This allows injection via index.html without code changes during demos.
+ */
+export const GOOGLE_CLIENT_ID_PLACEHOLDER = 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
+
+/**
+ * Auto‑backup controls
+ * – Auto‑backup runs once daily (23+ hours since last backup) if Drive is connected.
+ * – Manual backup can be triggered anytime from Settings.
+ * – If Drive is not connected, export (JSON/CSV/Excel) still works locally.
+ */
+export const AUTO_BACKUP_HOURS = 23;
 export const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email';
 export const BACKUP_FOLDER_NAME = 'EMI_Tracker_Backup';
 
